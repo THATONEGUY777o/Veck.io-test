@@ -1,4 +1,4 @@
-// Variáveis Globais de Sincronização
+// Variáveis do Multiplayer
 let localPlayerId = null;
 let currentRoomCode = null;
 let syncInterval = null;
@@ -34,33 +34,18 @@ function startOnlineMatch(playerName, roomCode) {
         window.gameInstance.localPlayer = new Player(localPlayerId, playerName, selectedColor, sp.x, sp.y, false);
         window.gameInstance.players.set(localPlayerId, window.gameInstance.localPlayer);
 
-        // Sobrescreve o disparo para enviar as balas à rede
+        // Intercepta a função de disparo para avisar os outros jogadores
         const originalShoot = window.gameInstance.shootBullet.bind(window.gameInstance);
         window.gameInstance.shootBullet = function(player) {
-            if (player.id === localPlayerId) {
-                const bulletCountBefore = window.gameInstance.bullets.length;
-                originalShoot(player);
-                
-                // Transmite as novas balas geradas para o Firebase
-                if (window.gameInstance.bullets.length > bulletCountBefore) {
-                    const newBullets = window.gameInstance.bullets.slice(bulletCountBefore);
-                    newBullets.forEach(b => {
-                        if (window.database && window.dbRef && window.dbPush) {
-                            const bulletsRef = window.dbRef(window.database, `rooms/${roomCode}/bullets`);
-                            window.dbPush(bulletsRef, {
-                                ownerId: b.ownerId,
-                                x: Math.round(b.x),
-                                y: Math.round(b.y),
-                                angle: b.angle,
-                                weaponName: player.currentWeapon.name,
-                                color: b.color,
-                                timestamp: Date.now()
-                            });
-                        }
-                    });
-                }
-            } else {
-                originalShoot(player);
+            originalShoot(player);
+
+            // Se fui EU a disparar, envia o evento de disparo para o Firebase
+            if (player.id === localPlayerId && window.database && window.dbRef && window.dbPush) {
+                const shootsRef = window.dbRef(window.database, `rooms/${roomCode}/shoots`);
+                window.dbPush(shootsRef, {
+                    ownerId: localPlayerId,
+                    timestamp: Date.now()
+                });
             }
         };
 
@@ -72,13 +57,13 @@ function startOnlineMatch(playerName, roomCode) {
 }
 
 // -------------------------------------------------------------
-// 2. Sincronização em Tempo Real (Posições, Balas e Dano)
+// 2. Sincronização em Tempo Real (Posições e Disparos)
 // -------------------------------------------------------------
 function setupNetworkSync(roomCode) {
     if (!window.database || !window.dbRef || !window.dbOnValue) return;
 
     const playersRef = window.dbRef(window.database, `rooms/${roomCode}/players`);
-    const bulletsRef = window.dbRef(window.database, `rooms/${roomCode}/bullets`);
+    const shootsRef = window.dbRef(window.database, `rooms/${roomCode}/shoots`);
 
     // A) Envia Posição e Status de Vida a cada 30ms (~30 FPS)
     if (syncInterval) clearInterval(syncInterval);
@@ -99,8 +84,8 @@ function setupNetworkSync(roomCode) {
                 health: p.health,
                 shield: p.shield,
                 score: p.score,
-                kills: p.kills,
-                deaths: p.deaths,
+                kills: p.kills || 0,
+                deaths: p.deaths || 0,
                 lastSeen: Date.now()
             });
         }
@@ -124,7 +109,7 @@ function setupNetworkSync(roomCode) {
                 window.gameInstance.addChatMessage('SYS', `${data.name} entrou na arena!`);
             }
 
-            // Atualização contínua das variáveis físicas e de vida
+            // Atualiza x, y, targetX e targetY para renderizar o movimento suavemente
             remotePlayer.x = data.x;
             remotePlayer.y = data.y;
             remotePlayer.targetX = data.x;
@@ -140,25 +125,23 @@ function setupNetworkSync(roomCode) {
         });
     });
 
-    // C) Escuta os Disparos dos Adversários na Nuvem
-    window.dbOnValue(bulletsRef, (snapshot) => {
-        const bulletsData = snapshot.val();
-        if (!bulletsData || !window.gameInstance) return;
+    // C) Escuta quando o adversário dispara e recria o tiro localmente
+    window.dbOnValue(shootsRef, (snapshot) => {
+        const shootsData = snapshot.val();
+        if (!shootsData || !window.gameInstance) return;
 
-        Object.keys(bulletsData).forEach((bKey) => {
-            const bData = bulletsData[bKey];
-            
-            // Desenha no ecran apenas tiros vindos de outros jogadores
-            if (bData.ownerId !== localPlayerId && Date.now() - bData.timestamp < 1500) {
-                const weapon = WEAPONS[bData.weaponName] || WEAPONS.BLASTER;
-                const b = new Bullet(bKey, bData.ownerId, bData.x, bData.y, bData.angle, weapon, bData.color);
-                
-                // Evita duplicação da mesma bala
-                if (!window.gameInstance.bullets.some(existing => existing.id === bKey)) {
-                    window.gameInstance.bullets.push(b);
-                    if (typeof audio !== 'undefined' && audio.playShoot) {
-                        audio.playShoot(weapon.name.toLowerCase());
-                    }
+        Object.keys(shootsData).forEach((sKey) => {
+            const sData = shootsData[sKey];
+
+            // Se o disparo veio do amigo e é recente
+            if (sData.ownerId !== localPlayerId && (Date.now() - sData.timestamp < 1000)) {
+                const remotePlayer = window.gameInstance.players.get(sData.ownerId);
+                if (remotePlayer && remotePlayer.alive) {
+                    // Força o motor do jogo a disparar a partir da posição do amigo
+                    const savedCooldown = remotePlayer.weaponCooldown;
+                    remotePlayer.weaponCooldown = 0;
+                    window.gameInstance.shootBullet(remotePlayer);
+                    remotePlayer.weaponCooldown = savedCooldown;
                 }
             }
         });
@@ -238,7 +221,7 @@ function joinRoom() {
 }
 
 // -------------------------------------------------------------
-// 5. Associação dos Eventos
+// 5. Associação dos Eventos dos Botões
 // -------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
     const btnCreate = document.getElementById('btnCreateRoom');
