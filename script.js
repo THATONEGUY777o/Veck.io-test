@@ -1,4 +1,3 @@
-
 // Variáveis do Multiplayer
 let localPlayerId = null;
 let currentRoomCode = null;
@@ -46,14 +45,14 @@ function startOnlineMatch(playerName, roomCode) {
 }
 
 // -------------------------------------------------------------
-// 2. Sincronização em Tempo Real (Enviar e Receber Posições)
+// 2. Sincronização em Tempo Real (CORRIGIDA)
 // -------------------------------------------------------------
 function setupNetworkSync(roomCode) {
     if (!window.database || !window.dbRef || !window.dbOnValue) return;
 
     const playersRef = window.dbRef(window.database, `rooms/${roomCode}/players`);
 
-    // A) Envia a tua posição para o Firebase a cada 50ms (20 vezes por segundo)
+    // A) Envia a tua posição para o Firebase a cada 30ms (~30 FPS)
     if (syncInterval) clearInterval(syncInterval);
     syncInterval = setInterval(() => {
         if (window.gameInstance && window.gameInstance.localPlayer && localPlayerId) {
@@ -66,6 +65,8 @@ function setupNetworkSync(roomCode) {
                 color: p.color,
                 x: Math.round(p.x),
                 y: Math.round(p.y),
+                vx: Math.round(p.vx || 0),
+                vy: Math.round(p.vy || 0),
                 angle: Number(p.angle.toFixed(2)),
                 health: p.health,
                 shield: p.shield,
@@ -73,9 +74,9 @@ function setupNetworkSync(roomCode) {
                 lastSeen: Date.now()
             });
         }
-    }, 50);
+    }, 30);
 
-    // B) Escuta a posição do teu amigo e desenha-o no teu ecrã
+    // B) Escuta a posição do teu amigo e FORÇA o movimento no Canvas
     window.dbOnValue(playersRef, (snapshot) => {
         const playersData = snapshot.val();
         if (!playersData || !window.gameInstance) return;
@@ -90,17 +91,22 @@ function setupNetworkSync(roomCode) {
             // Se o teu amigo ainda não existir no teu jogo, cria-o!
             if (!remotePlayer) {
                 remotePlayer = new Player(id, data.name, data.color, data.x, data.y, false);
+                remotePlayer.isBot = false; // Garante que não é um bot
                 window.gameInstance.players.set(id, remotePlayer);
                 window.gameInstance.addChatMessage('SYS', `${data.name} entrou na arena!`);
-            } else {
-                // Atualiza a posição do teu amigo em tempo real
-                remotePlayer.x = data.x;
-                remotePlayer.y = data.y;
-                remotePlayer.angle = data.angle;
-                remotePlayer.health = data.health;
-                remotePlayer.shield = data.shield;
-                remotePlayer.score = data.score;
             }
+
+            // CORREÇÃO CRÍTICA: Atualiza x, y, targetX e targetY para mover no Canvas
+            remotePlayer.x = data.x;
+            remotePlayer.y = data.y;
+            remotePlayer.targetX = data.x;
+            remotePlayer.targetY = data.y;
+            remotePlayer.vx = data.vx || 0;
+            remotePlayer.vy = data.vy || 0;
+            remotePlayer.angle = data.angle;
+            remotePlayer.health = data.health;
+            remotePlayer.shield = data.shield;
+            remotePlayer.score = data.score;
         });
     });
 }
