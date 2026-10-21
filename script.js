@@ -326,4 +326,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCopy = document.getElementById('btnCopyActiveCode');
     if (btnCopy) {
         btnCopy.addEventListener('click', () => {
-            const roomCodeText = document.getElementById('
+            const roomCodeText = document.getElementById('activeRoomCode');
+            if (roomCodeText && roomCodeText.innerText !== '---') {
+                navigator.clipboard.writeText(roomCodeText.innerText).then(() => {
+                    const originalHTML = btnCopy.innerHTML;
+                    btnCopy.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i>';
+                    setTimeout(() => { btnCopy.innerHTML = originalHTML; }, 1500);
+                });
+            }
+        });
+    }
+
+    // Envio do Chat Multiplayer via Enter
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const msg = chatInput.value.trim();
+                if (msg.length > 0 && currentRoomCode && window.database) {
+                    const roomChatRef = window.dbRef(window.database, `rooms/${currentRoomCode}/chat`);
+                    const senderName = window.gameInstance?.localPlayer?.name || 'Piloto';
+
+                    window.dbPush(roomChatRef, {
+                        sender: senderName,
+                        text: msg,
+                        timestamp: Date.now()
+                    });
+
+                    chatInput.value = '';
+                }
+            }
+        });
+    }
+});
+
+// Desconecta automaticamente se fechar o separador
+window.addEventListener('beforeunload', () => {
+    if (currentRoomCode && localPlayerId && window.database && window.dbRef && window.dbSet) {
+        const myPlayerRef = window.dbRef(window.database, `rooms/${currentRoomCode}/players/${localPlayerId}`);
+        window.dbSet(myPlayerRef, null);
+    }
+});
