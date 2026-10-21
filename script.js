@@ -11,7 +11,6 @@ const AFK_LIMIT = 5 * 60 * 1000; // 5 Minutos em milissegundos
 function resetAFKTimer() {
     if (afkTimer) clearTimeout(afkTimer);
     
-    // Só ativa o contador se o jogador estiver numa partida online ativa
     if (currentRoomCode && localPlayerId) {
         afkTimer = setTimeout(() => {
             alert("Foste desconectado por inatividade (AFK).");
@@ -33,13 +32,11 @@ function leaveOnlineMatch() {
     if (afkTimer) clearTimeout(afkTimer);
     if (syncInterval) clearInterval(syncInterval);
 
-    // Remove o registo do jogador do Firebase
     if (window.database && window.dbRef && window.dbSet && currentRoomCode && localPlayerId) {
         const myPlayerRef = window.dbRef(window.database, `rooms/${currentRoomCode}/players/${localPlayerId}`);
         window.dbSet(myPlayerRef, null);
     }
 
-    // Limpa estado local do jogo
     if (window.gameInstance) {
         window.gameInstance.isRunning = false;
         window.gameInstance.players.clear();
@@ -47,7 +44,6 @@ function leaveOnlineMatch() {
         window.gameInstance.localPlayer = null;
     }
 
-    // Oculta HUDs e volta ao Menu Inicial
     const badge = document.getElementById('activeRoomBadge');
     if (badge) badge.classList.add('hidden');
 
@@ -111,14 +107,16 @@ function startOnlineMatch(playerName, roomCode) {
 }
 
 // -------------------------------------------------------------
-// 2. Sincronização em Tempo Real (Posições e Disparos)
+// 2. Sincronização em Tempo Real (Posições, Tiros e Chat)
 // -------------------------------------------------------------
 function setupNetworkSync(roomCode) {
     if (!window.database || !window.dbRef || !window.dbOnValue) return;
 
     const playersRef = window.dbRef(window.database, `rooms/${roomCode}/players`);
     const shootsRef = window.dbRef(window.database, `rooms/${roomCode}/shoots`);
+    const chatRef = window.dbRef(window.database, `rooms/${roomCode}/chat`);
 
+    // A) Envia Posição e Status a cada 30ms (~30 FPS)
     if (syncInterval) clearInterval(syncInterval);
     syncInterval = setInterval(() => {
         if (window.gameInstance && window.gameInstance.localPlayer && localPlayerId) {
@@ -144,6 +142,7 @@ function setupNetworkSync(roomCode) {
         }
     }, 30);
 
+    // B) Escuta Jogadores e Atualiza Posições
     window.dbOnValue(playersRef, (snapshot) => {
         const playersData = snapshot.val();
         if (!window.gameInstance) return;
@@ -155,7 +154,6 @@ function setupNetworkSync(roomCode) {
             return;
         }
 
-        // Remove do Canvas jogadores que saíram da sala no Firebase
         window.gameInstance.players.forEach((p, id) => {
             if (id !== localPlayerId && !playersData[id]) {
                 window.gameInstance.players.delete(id);
@@ -191,6 +189,7 @@ function setupNetworkSync(roomCode) {
         });
     });
 
+    // C) Escuta Tiros dos Adversários
     window.dbOnValue(shootsRef, (snapshot) => {
         const shootsData = snapshot.val();
         if (!shootsData || !window.gameInstance) return;
@@ -206,6 +205,20 @@ function setupNetworkSync(roomCode) {
                     window.gameInstance.shootBullet(remotePlayer);
                     remotePlayer.weaponCooldown = savedCooldown;
                 }
+            }
+        });
+    });
+
+    // D) Escuta Mensagens do Chat
+    window.dbOnValue(chatRef, (snapshot) => {
+        const chatData = snapshot.val();
+        if (!chatData || !window.gameInstance) return;
+
+        Object.keys(chatData).forEach((msgKey) => {
+            const msg = chatData[msgKey];
+            if (Date.now() - msg.timestamp < 15000 && !msg.renderedLocally) {
+                msg.renderedLocally = true;
+                window.gameInstance.addChatMessage(msg.sender, msg.text);
             }
         });
     });
@@ -284,7 +297,7 @@ function joinRoom() {
 }
 
 // -------------------------------------------------------------
-// 5. Configuração de Eventos
+// 5. Associar Eventos aos Elementos
 // -------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
     initAFKListeners();
@@ -303,7 +316,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnConfirmJoin = document.getElementById('btnConfirmJoin');
     if (btnConfirmJoin) btnConfirmJoin.addEventListener('click', joinRoom);
 
-    // Evento do Botão de Sair da Sala
     const btnLeave = document.getElementById('btnLeaveRoom');
     if (btnLeave) {
         btnLeave.addEventListener('click', () => {
@@ -311,26 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Evento do Botão de Copiar Código
     const btnCopy = document.getElementById('btnCopyActiveCode');
     if (btnCopy) {
         btnCopy.addEventListener('click', () => {
-            const roomCodeText = document.getElementById('activeRoomCode');
-            if (roomCodeText && roomCodeText.innerText !== '---') {
-                navigator.clipboard.writeText(roomCodeText.innerText).then(() => {
-                    const originalHTML = btnCopy.innerHTML;
-                    btnCopy.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i>';
-                    setTimeout(() => { btnCopy.innerHTML = originalHTML; }, 1500);
-                });
-            }
-        });
-    }
-});
-
-// Desconecta o jogador automaticamente se fechar a janela ou o navegador
-window.addEventListener('beforeunload', () => {
-    if (currentRoomCode && localPlayerId && window.database && window.dbRef && window.dbSet) {
-        const myPlayerRef = window.dbRef(window.database, `rooms/${currentRoomCode}/players/${localPlayerId}`);
-        window.dbSet(myPlayerRef, null);
-    }
-});
+            const roomCodeText = document.getElementById('
